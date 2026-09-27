@@ -77,6 +77,7 @@ class HasUpdate implements IOperation, SingletonInterface
             }
         }
 
-        return new OperationResult(false, false);
+        // Available releases do not match the installed release channel (ELTS / community)
+        return new OperationResult(true, false);
     }
 }
