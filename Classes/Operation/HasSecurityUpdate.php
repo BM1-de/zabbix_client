@@ -80,6 +80,7 @@ class HasSecurityUpdate implements IOperation, SingletonInterface
             }
         }
 
-        return new OperationResult(false, false);
+        // Updates are available, but none of them is security relevant
+        return new OperationResult(true, false);
     }
 }
