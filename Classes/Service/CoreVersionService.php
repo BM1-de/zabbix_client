@@ -17,6 +17,7 @@ declare(strict_types=1);
 
 namespace WapplerSystems\ZabbixClient\Service;
 
+use TYPO3\CMS\Core\Registry;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Utility\VersionNumberUtility;
 use TYPO3\CMS\Install\Service\Exception\RemoteFetchException;
@@ -36,6 +37,23 @@ class CoreVersionService
      * @var string
      */
     protected $apiBaseUrl = 'https://get.typo3.org/v1/api/';
+
+    /**
+     * Seconds a cached API response is used without asking get.typo3.org again
+     */
+    protected const CACHE_LIFETIME = 3600;
+
+    /**
+     * Seconds a cached API response is still used when get.typo3.org can not be reached
+     */
+    protected const CACHE_FALLBACK_LIFETIME = 604800;
+
+    /**
+     * Set after a failed request, so further calls in the same run use the cache right away
+     *
+     * @var bool
+     */
+    protected static $remoteUnavailable = false;
 
     /**
      * Development git checkout versions always end with '-dev'. They are
@@ -176,6 +194,9 @@ class CoreVersionService
     }
 
     /**
+     * Responses are cached in the registry, so a short outage of get.typo3.org
+     * does not turn into a wrong "no update available" result.
+     *
      * @param string $url
      * @return array
      * @throws \TYPO3\CMS\Install\Service\Exception\RemoteFetchException
@@ -183,12 +204,30 @@ class CoreVersionService
     protected function fetchFromRemote(string $url): array
     {
         $url = $this->apiBaseUrl . $url;
-        $json = GeneralUtility::getUrl($url);
+        $registry = GeneralUtility::makeInstance(Registry::class);
+        $cached = $registry->get('tx_zabbixclient_coreversion', sha1($url));
+        $cacheAge = is_array($cached) ? time() - (int)($cached['time'] ?? 0) : null;
 
-        if (!$json) {
+        if ($cacheAge !== null && $cacheAge < self::CACHE_LIFETIME) {
+            return $cached['data'];
+        }
+
+        $result = null;
+        if (!self::$remoteUnavailable) {
+            $json = GeneralUtility::getUrl($url);
+            $result = $json ? json_decode($json, true) : null;
+            self::$remoteUnavailable = !is_array($result);
+        }
+
+        if (!is_array($result)) {
+            if ($cacheAge !== null && $cacheAge < self::CACHE_FALLBACK_LIFETIME) {
+                return $cached['data'];
+            }
             $this->throwFetchException($url);
         }
-        return json_decode($json, true);
+
+        $registry->set('tx_zabbixclient_coreversion', sha1($url), ['time' => time(), 'data' => $result]);
+        return $result;
     }
 
     /**
